@@ -1,103 +1,84 @@
 ESX = nil
-TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
 
--- Ajouter une clé de véhicule à l'inventaire d'un joueur
-RegisterNetEvent('esx_keys:addVehicleKey')
-AddEventHandler('esx_keys:addVehicleKey', function(vehiclePlate)
+Citizen.CreateThread(function()
+    while ESX == nil do
+        TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
+        Citizen.Wait(0)
+    end
+end)
+
+-- Commande pour verrouiller un véhicule
+RegisterNetEvent('esx_keys:lockVehicle')
+AddEventHandler('esx_keys:lockVehicle', function(vehiclePlate)
     local _source = source
     local xPlayer = ESX.GetPlayerFromId(_source)
 
-    -- Vérifie si le joueur a déjà cette clé
-    MySQL.Async.fetchScalar('SELECT count(*) FROM keys_inventory_items WHERE owner = @owner AND plate = @plate AND inventory_name = @inventory_name',
-        {
-            ['@owner'] = xPlayer.identifier,
-            ['@plate'] = vehiclePlate,
-            ['@inventory_name'] = 'vehicle_keys'
-        }, function(count)
-            if count == 0 then
-                -- Ajoute la clé
-                MySQL.Async.execute('INSERT INTO keys_inventory_items (inventory_name, name, plate, count, owner) VALUES (@inventory_name, @name, @plate, @count, @owner)',
+    -- Vérifier si le joueur a une clé pour ce véhicule
+    MySQL.Async.fetchScalar('SELECT count(*) FROM keys_inventory_items WHERE owner = @owner AND name = @name',
+    {
+        ['@owner'] = xPlayer.identifier,
+        ['@name'] = 'vehicle_key_' .. vehiclePlate
+    }, function(count)
+        if count > 0 then
+            -- Logique de verrouillage/déverrouillage ici
+            TriggerClientEvent('esx:showNotification', _source, 'You locked/unlocked the vehicle with plate ' .. vehiclePlate)
+        else
+            TriggerClientEvent('esx:showNotification', _source, 'You don\'t have the key for this vehicle.')
+        end
+    end)
+end)
+
+-- Commande pour partager une clé avec un autre joueur
+RegisterNetEvent('esx_keys:shareVehicleKey')
+AddEventHandler('esx_keys:shareVehicleKey', function(targetPlayer, vehiclePlate)
+    local _source = source
+    local xPlayer = ESX.GetPlayerFromId(_source)
+
+    -- Vérifier que le joueur possède la clé
+    MySQL.Async.fetchScalar('SELECT count(*) FROM keys_inventory_items WHERE owner = @owner AND name = @name',
+    {
+        ['@owner'] = xPlayer.identifier,
+        ['@name'] = 'vehicle_key_' .. vehiclePlate
+    }, function(count)
+        if count > 0 then
+            local target = ESX.GetPlayerFromId(targetPlayer)
+            if target then
+                -- Partager la clé
+                MySQL.Async.execute('INSERT INTO keys_inventory_items (inventory_name, name, count, owner) VALUES (@inventory_name, @name, @count, @owner)',
                 {
                     ['@inventory_name'] = 'vehicle_keys',
-                    ['@name'] = 'car_key_' .. vehiclePlate,
-                    ['@plate'] = vehiclePlate,
+                    ['@name'] = 'vehicle_key_' .. vehiclePlate,
                     ['@count'] = 1,
-                    ['@owner'] = xPlayer.identifier
-                }, function(rowsChanged)
-                    TriggerClientEvent('esx:showNotification', _source, "You received a key for vehicle with plate " .. vehiclePlate)
-                end)
+                    ['@owner'] = target.identifier
+                })
+                TriggerClientEvent('esx:showNotification', _source, 'You have shared your key with player ' .. target.name)
+                TriggerClientEvent('esx:showNotification', targetPlayer, 'You have received a shared key for the vehicle with plate ' .. vehiclePlate)
             else
-                TriggerClientEvent('esx:showNotification', _source, "You already have a key for this vehicle.")
+                TriggerClientEvent('esx:showNotification', _source, 'Target player not found.')
             end
-        end)
+        else
+            TriggerClientEvent('esx:showNotification', _source, 'You don\'t have the key for this vehicle.')
+        end
+    end)
 end)
 
--- Ajouter un joueur à la liste de partage de clé
-RegisterNetEvent('esx_keys:shareVehicleKey')
-AddEventHandler('esx_keys:shareVehicleKey', function(vehiclePlate, targetPlayer)
+-- Commande pour verrouiller ou déverrouiller une propriété
+RegisterNetEvent('esx_keys:lockProperty')
+AddEventHandler('esx_keys:lockProperty', function(propertyId)
     local _source = source
     local xPlayer = ESX.GetPlayerFromId(_source)
 
-    MySQL.Async.fetchScalar('SELECT shared_with FROM keys_inventory_items WHERE owner = @owner AND plate = @plate AND inventory_name = @inventory_name',
-        {
-            ['@owner'] = xPlayer.identifier,
-            ['@plate'] = vehiclePlate,
-            ['@inventory_name'] = 'vehicle_keys'
-        }, function(sharedWith)
-            if sharedWith then
-                local sharedList = sharedWith ~= '' and sharedWith or ''
-                if not string.find(sharedList, targetPlayer) then
-                    sharedList = sharedList .. ',' .. targetPlayer
-
-                    MySQL.Async.execute('UPDATE keys_inventory_items SET shared_with = @shared_with WHERE owner = @owner AND plate = @plate AND inventory_name = @inventory_name',
-                    {
-                        ['@shared_with'] = sharedList,
-                        ['@owner'] = xPlayer.identifier,
-                        ['@plate'] = vehiclePlate,
-                        ['@inventory_name'] = 'vehicle_keys'
-                    }, function(rowsChanged)
-                        TriggerClientEvent('esx:showNotification', _source, "You have shared your key for the vehicle with plate " .. vehiclePlate .. " with player " .. targetPlayer)
-                        -- Optionnel : notifiez le joueur cible
-                        TriggerClientEvent('esx:showNotification', targetPlayer, "You have received a shared key for the vehicle with plate " .. vehiclePlate)
-                    end)
-                else
-                    TriggerClientEvent('esx:showNotification', _source, "You have already shared this key with this player.")
-                end
-            else
-                TriggerClientEvent('esx:showNotification', _source, "You do not have a key for this vehicle.")
-            end
-        end)
-end)
-
--- Retirer un joueur de la liste de partage de clé
-RegisterNetEvent('esx_keys:removeSharedKey')
-AddEventHandler('esx_keys:removeSharedKey', function(vehiclePlate, targetPlayer)
-    local _source = source
-    local xPlayer = ESX.GetPlayerFromId(_source)
-
-    MySQL.Async.fetchScalar('SELECT shared_with FROM keys_inventory_items WHERE owner = @owner AND plate = @plate AND inventory_name = @inventory_name',
-        {
-            ['@owner'] = xPlayer.identifier,
-            ['@plate'] = vehiclePlate,
-            ['@inventory_name'] = 'vehicle_keys'
-        }, function(sharedWith)
-            if sharedWith then
-                local sharedList = sharedWith
-                sharedList = string.gsub(sharedList, targetPlayer, "")  -- Retirer le joueur du partage
-
-                MySQL.Async.execute('UPDATE keys_inventory_items SET shared_with = @shared_with WHERE owner = @owner AND plate = @plate AND inventory_name = @inventory_name',
-                {
-                    ['@shared_with'] = sharedList,
-                    ['@owner'] = xPlayer.identifier,
-                    ['@plate'] = vehiclePlate,
-                    ['@inventory_name'] = 'vehicle_keys'
-                }, function(rowsChanged)
-                    TriggerClientEvent('esx:showNotification', _source, "You have removed the shared key for the vehicle with plate " .. vehiclePlate .. " from player " .. targetPlayer)
-                    -- Optionnel : notifiez le joueur cible
-                    TriggerClientEvent('esx:showNotification', targetPlayer, "Your access to the key for vehicle with plate " .. vehiclePlate .. " has been revoked.")
-                end)
-            else
-                TriggerClientEvent('esx:showNotification', _source, "You do not have a shared key for this vehicle.")
-            end
-        end)
+    -- Vérifier si le joueur possède la clé pour cette propriété
+    MySQL.Async.fetchScalar('SELECT count(*) FROM keys_inventory_items WHERE owner = @owner AND name = @name',
+    {
+        ['@owner'] = xPlayer.identifier,
+        ['@name'] = 'property_key_' .. propertyId
+    }, function(count)
+        if count > 0 then
+            -- Logique de verrouillage/déverrouillage de la propriété
+            TriggerClientEvent('esx:showNotification', _source, 'You locked/unlocked the property with ID ' .. propertyId)
+        else
+            TriggerClientEvent('esx:showNotification', _source, 'You don\'t have the key for this property.')
+        end
+    end)
 end)
