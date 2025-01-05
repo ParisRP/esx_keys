@@ -19,6 +19,7 @@ end)
 __________________________________________________________________
 
 Dependencies Make sure the following resources are installed and configured: 
+
 • es_extended 
 • esx_vehicleshop 
 • esx_property 
